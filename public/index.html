@@ -1,0 +1,110 @@
+<!doctype html>
+<html lang="pt-br">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Upload R2</title>
+  <style>
+    body { font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial; padding: 20px; max-width: 760px; margin: 0 auto; }
+    .card { border: 1px solid #e5e7eb; border-radius: 12px; padding: 16px; }
+    .row { display:flex; gap: 10px; align-items:center; flex-wrap: wrap; }
+    button { padding: 10px 14px; border-radius: 10px; border: 1px solid #111827; background:#111827; color:#fff; cursor:pointer; }
+    button:disabled { opacity: .5; cursor:not-allowed; }
+    .barWrap { height: 10px; background:#f3f4f6; border-radius: 999px; overflow:hidden; margin-top: 12px; }
+    .bar { height: 100%; width: 0%; background:#111827; transition: width .2s; }
+    .url { width: 100%; padding: 10px; border: 1px solid #e5e7eb; border-radius: 10px; margin-top: 12px; }
+    .muted { color:#6b7280; font-size: 13px; margin-top: 8px; }
+    .ok { color:#059669; }
+    .err { color:#dc2626; white-space: pre-wrap; }
+  </style>
+</head>
+<body>
+  <h2>Upload de arquivo (R2)</h2>
+
+  <div class="card">
+    <div class="row">
+      <input id="file" type="file" />
+      <button id="send">Enviar</button>
+      <button id="copy" disabled>Copiar URL</button>
+    </div>
+
+    <div class="barWrap"><div class="bar" id="bar"></div></div>
+    <div class="muted" id="status"></div>
+
+    <input id="url" class="url" placeholder="A URL aparecerá aqui..." readonly />
+    <div id="msg" class="muted"></div>
+  </div>
+
+  <script>
+    const fileEl = document.getElementById("file");
+    const sendEl = document.getElementById("send");
+    const copyEl = document.getElementById("copy");
+    const barEl = document.getElementById("bar");
+    const statusEl = document.getElementById("status");
+    const urlEl = document.getElementById("url");
+    const msgEl = document.getElementById("msg");
+
+    const setProgress = (pct) => barEl.style.width = Math.max(0, Math.min(100, pct)) + "%";
+
+    copyEl.onclick = async () => {
+      await navigator.clipboard.writeText(urlEl.value);
+      msgEl.innerHTML = `<span class="ok">✅ URL copiada!</span>`;
+    };
+
+    sendEl.onclick = async () => {
+      msgEl.textContent = "";
+      urlEl.value = "";
+      copyEl.disabled = true;
+
+      const file = fileEl.files?.[0];
+      if (!file) {
+        msgEl.innerHTML = `<span class="err">Selecione um arquivo.</span>`;
+        return;
+      }
+
+      sendEl.disabled = true;
+      statusEl.textContent = "Gerando link de upload...";
+      setProgress(0);
+
+      const signRes = await fetch("/api/sign", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ filename: file.name, contentType: file.type || "application/octet-stream" })
+      });
+
+      if (!signRes.ok) {
+        sendEl.disabled = false;
+        msgEl.innerHTML = `<span class="err">Erro ao assinar: ${await signRes.text()}</span>`;
+        return;
+      }
+
+      const { uploadUrl, publicUrl } = await signRes.json();
+
+      statusEl.textContent = "Enviando...";
+      await new Promise((resolve, reject) => {
+        const xhr = new XMLHttpRequest();
+        xhr.open("PUT", uploadUrl, true);
+        if (file.type) xhr.setRequestHeader("Content-Type", file.type);
+
+        xhr.upload.onprogress = (e) => {
+          if (!e.lengthComputable) return;
+          const pct = (e.loaded / e.total) * 100;
+          setProgress(pct);
+          statusEl.textContent = `Enviando... ${pct.toFixed(0)}%`;
+        };
+
+        xhr.onload = () => (xhr.status >= 200 && xhr.status < 300) ? resolve() : reject(new Error(xhr.responseText || `HTTP ${xhr.status}`));
+        xhr.onerror = () => reject(new Error("Falha de rede"));
+        xhr.send(file);
+      });
+
+      setProgress(100);
+      statusEl.textContent = "Concluído.";
+      urlEl.value = publicUrl;
+      copyEl.disabled = false;
+      msgEl.innerHTML = `<span class="ok">✅ Upload concluído. Cole a URL no campo do Notion/Supabase.</span>`;
+      sendEl.disabled = false;
+    };
+  </script>
+</body>
+</html>
